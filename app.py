@@ -1,13 +1,15 @@
-"""Streamlit Tracker - Excel loader
+"""Streamlit Tracker
 
-English version:
-- Upload an Excel file
+Current scope:
+- Upload an Excel workbook
 - Select a sheet
 - Extract a clean `reference`
 - Read `person_name`
 - Filter by one or more people
-- Show only the processed columns
-- Download the result
+- Parse a status block from an Outlook email body
+
+Status rule:
+- Take everything after `Message:` and before `Click to access job online`
 
 Run locally:
     streamlit run app.py
@@ -16,6 +18,7 @@ Run locally:
 from __future__ import annotations
 
 from io import BytesIO
+from typing import List
 
 import pandas as pd
 import streamlit as st
@@ -88,7 +91,7 @@ def clean_reference(value: object) -> str:
     return text.split("_")[0].strip()
 
 
-def guess_reference_column(columns: list[str]) -> int:
+def guess_reference_column(columns: List[str]) -> int:
     lowered = [str(c).strip().lower() for c in columns]
     for key in ("reference", "ref", "reference id", "reference_id"):
         if key in lowered:
@@ -96,12 +99,39 @@ def guess_reference_column(columns: list[str]) -> int:
     return 0
 
 
-def guess_person_column(columns: list[str]) -> int:
+def guess_person_column(columns: List[str]) -> int:
     lowered = [str(c).strip().lower() for c in columns]
     for key in ("person name", "person", "name"):
         if key in lowered:
             return lowered.index(key)
     return 3 if len(columns) > 3 else max(0, len(columns) - 1)
+
+
+def extract_status_from_email(email_body: str) -> str:
+    """Extract everything between `Message:` and `Click to access job online`."""
+    if not email_body:
+        return ""
+
+    text = email_body.replace("\r\n", "\n").replace("\r", "\n")
+    lower = text.lower()
+
+    start_token = "message:"
+    end_token = "click to access job online"
+
+    start_idx = lower.find(start_token)
+    if start_idx == -1:
+        return ""
+
+    start_idx += len(start_token)
+    end_idx = lower.find(end_token, start_idx)
+    if end_idx == -1:
+        extracted = text[start_idx:]
+    else:
+        extracted = text[start_idx:end_idx]
+
+    lines = [line.strip() for line in extracted.splitlines()]
+    cleaned = [line for line in lines if line]
+    return " ".join(cleaned).strip()
 
 
 def to_excel_bytes(df: pd.DataFrame) -> bytes:
@@ -116,7 +146,7 @@ def main() -> None:
         """
         <div class="hero">
             <h1>📊 Excel Tracker</h1>
-            <p>Upload your workbook, extract a clean reference, and filter by person name.</p>
+            <p>Upload your workbook, extract a clean reference, filter by person name, and parse Outlook status text.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -249,12 +279,30 @@ def main() -> None:
             use_container_width=True,
         )
 
+    st.divider()
+    st.subheader("Outlook status parser")
+    st.write("Paste the full email body below to extract the status block.")
+
+    email_body = st.text_area(
+        "Email body",
+        height=250,
+        placeholder="Paste the email text here...",
+    )
+    extracted_status = extract_status_from_email(email_body)
+
+    status_cols = st.columns([1, 2])
+    with status_cols[0]:
+        st.metric("Status characters", len(extracted_status))
+    with status_cols[1]:
+        st.text_area("Extracted status", value=extracted_status, height=160)
+
     with st.expander("How it works"):
         st.write(
             """
             - `reference`: the text before the first underscore.
             - `person_name`: the selected person column, trimmed.
             - Filters let you show one or more people, such as just two names.
+            - The status parser extracts everything after `Message:` and before `Click to access job online`.
             """
         )
 
